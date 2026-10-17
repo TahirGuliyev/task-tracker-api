@@ -117,9 +117,11 @@ func (s *Store) Get(ctx context.Context, id int64) (task.Task, error) {
 	return scanTask(row)
 }
 
-// ListOptions holds the filters for List.
+// ListOptions holds the filter and the page for List.
 type ListOptions struct {
 	Status task.Status // "" means every status
+	Limit  int         // the most tasks to return; 0 means no limit
+	Offset int         // how many tasks to skip before the first one returned
 }
 
 // List returns the tasks that match opts, newest first.
@@ -135,6 +137,14 @@ func (s *Store) List(ctx context.Context, opts ListOptions) ([]task.Task, error)
 	// It has whole seconds, so tasks created in the same second are ordered
 	// by id (ids only grow).
 	query += " ORDER BY created_at DESC, id DESC"
+
+	// SQLite needs a LIMIT before an OFFSET, and LIMIT -1 means no limit.
+	limit := -1
+	if opts.Limit > 0 {
+		limit = opts.Limit
+	}
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, limit, opts.Offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

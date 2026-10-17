@@ -80,7 +80,7 @@ func (h *taskHandlers) createTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
-// listTasks handles GET /tasks, with an optional ?status= filter.
+// listTasks handles GET /tasks, with optional ?status=, ?limit= and ?offset=.
 func (h *taskHandlers) listTasks(w http.ResponseWriter, r *http.Request) {
 	opts, err := parseListOptions(r)
 	if err != nil {
@@ -216,7 +216,7 @@ func (h *taskHandlers) deleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseListOptions reads the query string of GET /tasks.
-// Unknown parameters are ignored, and an empty status means no filter.
+// Unknown parameters are ignored, and an empty value means "not set".
 func parseListOptions(r *http.Request) (storage.ListOptions, error) {
 	// r.URL.Query() silently drops broken pairs such as %zz
 	// and would return every task with 200.
@@ -234,6 +234,25 @@ func parseListOptions(r *http.Request) (storage.ListOptions, error) {
 			return storage.ListOptions{}, errors.New(task.InvalidStatusMessage)
 		}
 		opts.Status = s
+	}
+
+	// limit and offset are optional. Without limit every task is returned,
+	// because GET /tasks must list all tasks.
+	limit := values.Get("limit")
+	if limit != "" {
+		n, err := strconv.Atoi(limit)
+		if err != nil || n < 1 {
+			return storage.ListOptions{}, errors.New("limit must be a positive integer")
+		}
+		opts.Limit = n
+	}
+	offset := values.Get("offset")
+	if offset != "" {
+		n, err := strconv.Atoi(offset)
+		if err != nil || n < 0 {
+			return storage.ListOptions{}, errors.New("offset must be zero or a positive integer")
+		}
+		opts.Offset = n
 	}
 	return opts, nil
 }

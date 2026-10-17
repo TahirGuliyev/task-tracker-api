@@ -359,8 +359,60 @@ func TestListTasksStatusFilter(t *testing.T) {
 	}
 }
 
-// TestListTasksBadQuery checks that a bad filter is 400, not an empty list.
+// TestListTasksPagination checks limit and offset, alone and with the status
+// filter. Pages follow the newest-first order.
+func TestListTasksPagination(t *testing.T) {
+	router := newTestRouter(t)
+	postTask(t, router, `{"title":"Buy groceries"}`)               // id 1, pending
+	postTask(t, router, `{"title":"Call mom","status":"done"}`)    // id 2, done
+	postTask(t, router, `{"title":"Pay rent"}`)                    // id 3, pending
+	postTask(t, router, `{"title":"Walk the dog"}`)                // id 4, pending
+	postTask(t, router, `{"title":"Read a book","status":"done"}`) // id 5, done
+
+	tests := []struct {
+		name    string
+		path    string
+		wantIDs []int64
+	}{
+		{"first page", "/tasks?limit=2", []int64{5, 4}},
+		{"second page", "/tasks?limit=2&offset=2", []int64{3, 2}},
+		{"last page is shorter", "/tasks?limit=2&offset=4", []int64{1}},
+		{"offset without limit", "/tasks?offset=3", []int64{2, 1}},
+		{"limit bigger than the list", "/tasks?limit=100", []int64{5, 4, 3, 2, 1}},
+		{"empty values mean not set", "/tasks?limit=&offset=", []int64{5, 4, 3, 2, 1}},
+		{"with status", "/tasks?status=pending&limit=2", []int64{4, 3}},
+		{"with status and offset", "/tasks?status=pending&limit=2&offset=2", []int64{1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, router, "GET", tt.path, "")
+			checkStatus(t, rec, http.StatusOK)
+			if got := ids(decodeList(t, rec)); !slices.Equal(got, tt.wantIDs) {
+				t.Errorf("ids = %v, want %v", got, tt.wantIDs)
+			}
+		})
+	}
+}
+
+// TestListTasksOffsetBeyondEnd checks that a page after the last task is [], not null.
+func TestListTasksOffsetBeyondEnd(t *testing.T) {
+	router := newTestRouter(t)
+	postTask(t, router, `{"title":"Buy groceries"}`)
+
+	rec := doRequest(t, router, "GET", "/tasks?limit=10&offset=5", "")
+
+	checkStatus(t, rec, http.StatusOK)
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Errorf("body = %s, want []", body)
+	}
+}
+
+// TestListTasksBadQuery checks that a bad query parameter is 400, not an empty list.
 func TestListTasksBadQuery(t *testing.T) {
+	const limitMessage = "limit must be a positive integer"
+	const offsetMessage = "offset must be zero or a positive integer"
+
 	tests := []struct {
 		name      string
 		path      string
@@ -370,6 +422,13 @@ func TestListTasksBadQuery(t *testing.T) {
 		{"upper-case status", "/tasks?status=DONE", task.InvalidStatusMessage},
 		{"broken escape", "/tasks?status=%zz", "invalid query string"},
 		{"semicolon", "/tasks?status=done;x=1", "invalid query string"},
+		{"zero limit", "/tasks?limit=0", limitMessage},
+		{"negative limit", "/tasks?limit=-1", limitMessage},
+		{"limit not a number", "/tasks?limit=abc", limitMessage},
+		{"limit with a fraction", "/tasks?limit=1.5", limitMessage},
+		{"limit too big for int", "/tasks?limit=99999999999999999999", limitMessage},
+		{"negative offset", "/tasks?offset=-1", offsetMessage},
+		{"offset not a number", "/tasks?offset=abc", offsetMessage},
 	}
 
 	router := newTestRouter(t)

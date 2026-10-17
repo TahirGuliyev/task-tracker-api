@@ -13,8 +13,8 @@ import (
 // maxBodyBytes is the largest request body the API reads.
 const maxBodyBytes = 1024 * 1024 // 1 MB
 
-// allowedFields lists the fields a request body may have.
-// It is part of the error message for an unknown field.
+// allowedFields lists the fields a request body may have. It is part of the
+// error messages for an unknown field and for a PATCH body with no fields.
 const allowedFields = "title, status, due_date"
 
 // decodeJSON reads one JSON object from the request body into dst,
@@ -64,6 +64,22 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		return errors.New("request body must contain a single JSON object")
 	}
 	return nil
+}
+
+// stringField reads a JSON string from raw. name is the field name
+// for the error message, which is safe to show the client.
+func stringField(raw json.RawMessage, name string) (string, error) {
+	// json.Unmarshal accepts null for a string without an error
+	// (the string just stays ""), so null is checked first.
+	if string(raw) == "null" {
+		return "", fmt.Errorf("%s must be a string", name)
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("%s must be a string", name)
+	}
+	return s, nil
 }
 
 // writeJSON writes v as a JSON response with the given status code.

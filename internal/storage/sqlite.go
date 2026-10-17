@@ -158,3 +158,46 @@ func (s *Store) List(ctx context.Context, opts ListOptions) ([]task.Task, error)
 	}
 	return tasks, nil
 }
+
+// Update applies the changes to the task with the given id and returns the
+// updated task. It returns ErrNotFound for a missing task and a
+// task.ErrValidation error when the result breaks a rule.
+// Read, change and write happen in one transaction, so two PATCH requests
+// cannot overwrite each other's changes.
+func (s *Store) Update(ctx context.Context, id int64, changes task.Changes) (task.Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return task.Task{}, err
+	}
+	// On an early return, Rollback ends the transaction and frees the
+	// connection. It does nothing after a successful Commit.
+	defer tx.Rollback()
+
+	// Inside the transaction only tx may be used. With one connection,
+	// a call on s.db would wait forever for the connection tx is holding.
+	row := tx.QueryRowContext(ctx, "SELECT "+taskColumns+" FROM tasks WHERE id = ?", id)
+	current, err := scanTask(row)
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	// Apply checks the rules on the merged task, so this may be a validation error.
+	updated, err := current.Apply(changes)
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		"UPDATE tasks SET title = ?, status = ?, due_date = ? WHERE id = ?",
+		updated.Title, updated.Status, updated.DueDate, id,
+	)
+	if err != nil {
+		return task.Task{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return task.Task{}, err
+	}
+	// updated already holds what was written, so there is no second SELECT.
+	return updated, nil
+}

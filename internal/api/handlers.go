@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -35,6 +36,7 @@ func NewRouter(store *storage.Store) http.Handler {
 	// would never match.
 	mux.HandleFunc("GET /tasks", h.listTasks)
 	mux.HandleFunc("GET /tasks/{id}", h.getTask)
+	mux.HandleFunc("PATCH /tasks/{id}", h.updateTask)
 
 	return mux
 }
@@ -99,6 +101,91 @@ func (h *taskHandlers) getTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t, err := h.store.Get(context.Background(), id)
+	if err != nil {
+		respondWithError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// updateTaskRequest is the JSON body of PATCH /tasks/{id}.
+// RawMessage keeps the raw JSON of a field, so a missing field (nil)
+// can be told apart from null ("null").
+type updateTaskRequest struct {
+	Title   json.RawMessage `json:"title"`
+	Status  json.RawMessage `json:"status"`
+	DueDate json.RawMessage `json:"due_date"`
+}
+
+// toChanges checks that the sent fields are strings and turns them into
+// task.Changes. The task rules are checked later, on the merged task.
+func (req updateTaskRequest) toChanges() (task.Changes, error) {
+	// {} and a null body both leave every field nil.
+	if req.Title == nil && req.Status == nil && req.DueDate == nil {
+		return task.Changes{}, errors.New("request body must contain at least one of: " + allowedFields)
+	}
+
+	var changes task.Changes
+
+	if req.Title != nil {
+		s, err := stringField(req.Title, "title")
+		if err != nil {
+			return task.Changes{}, err
+		}
+		changes.Title = &s
+	}
+
+	if req.Status != nil {
+		s, err := stringField(req.Status, "status")
+		if err != nil {
+			return task.Changes{}, err
+		}
+		st := task.Status(s)
+		changes.Status = &st
+	}
+
+	if req.DueDate != nil {
+		// due_date is optional, so null means "remove the due date".
+		// title and status are required, so for them null is an error.
+		if string(req.DueDate) == "null" {
+			changes.ClearDueDate = true
+		} else {
+			s, err := stringField(req.DueDate, "due_date")
+			if err != nil {
+				return task.Changes{}, err
+			}
+			changes.DueDate = &s
+		}
+	}
+
+	return changes, nil
+}
+
+// updateTask handles PATCH /tasks/{id}. Only the sent fields change.
+// The checks run in this order: a bad id gives 400, a bad body gives 400,
+// a missing task gives 404, and a rule broken after merging gives 400.
+func (h *taskHandlers) updateTask(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req updateTaskRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	changes, err := req.toChanges()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Update returns ErrNotFound for a missing task (404)
+	// and a validation error for a broken rule (400).
+	t, err := h.store.Update(context.Background(), id, changes)
 	if err != nil {
 		respondWithError(w, err)
 		return

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -29,6 +30,10 @@ func NewRouter(store *storage.Store) http.Handler {
 	// 405 Method Not Allowed and an Allow header. Do not register "/":
 	// a catch-all route would turn every 405 into a 404.
 	mux.HandleFunc("POST /tasks", h.createTask)
+	// The query string is not part of a pattern, so this route also serves
+	// GET /tasks?status=done. A pattern such as "GET /tasks?status=done"
+	// would never match.
+	mux.HandleFunc("GET /tasks", h.listTasks)
 	mux.HandleFunc("GET /tasks/{id}", h.getTask)
 
 	return mux
@@ -69,6 +74,22 @@ func (h *taskHandlers) createTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
+// listTasks handles GET /tasks, with an optional ?status= filter.
+func (h *taskHandlers) listTasks(w http.ResponseWriter, r *http.Request) {
+	opts, err := parseListOptions(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tasks, err := h.store.List(context.Background(), opts)
+	if err != nil {
+		respondWithError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tasks)
+}
+
 // getTask handles GET /tasks/{id}.
 func (h *taskHandlers) getTask(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)
@@ -83,6 +104,29 @@ func (h *taskHandlers) getTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+// parseListOptions reads the query string of GET /tasks.
+// Unknown parameters are ignored, and an empty status means no filter.
+func parseListOptions(r *http.Request) (storage.ListOptions, error) {
+	// r.URL.Query() silently drops broken pairs such as %zz
+	// and would return every task with 200.
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return storage.ListOptions{}, errors.New("invalid query string")
+	}
+
+	var opts storage.ListOptions
+	// Get returns the first value, so ?status=done&status=pending means done.
+	status := values.Get("status")
+	if status != "" {
+		s := task.Status(status)
+		if !s.IsValid() {
+			return storage.ListOptions{}, errors.New(task.InvalidStatusMessage)
+		}
+		opts.Status = s
+	}
+	return opts, nil
 }
 
 // parseID reads the {id} part of the path. Valid ids are whole numbers from 1 up.

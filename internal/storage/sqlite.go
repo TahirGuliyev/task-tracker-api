@@ -116,3 +116,45 @@ func (s *Store) Get(ctx context.Context, id int64) (task.Task, error) {
 	row := s.db.QueryRowContext(ctx, "SELECT "+taskColumns+" FROM tasks WHERE id = ?", id)
 	return scanTask(row)
 }
+
+// ListOptions holds the filters for List.
+type ListOptions struct {
+	Status task.Status // "" means every status
+}
+
+// List returns the tasks that match opts, newest first.
+func (s *Store) List(ctx context.Context, opts ListOptions) ([]task.Task, error) {
+	query := "SELECT " + taskColumns + " FROM tasks"
+	var args []any
+	if opts.Status != "" {
+		// The value goes in args, never into the SQL text, so it cannot change the query.
+		query += " WHERE status = ?"
+		args = append(args, opts.Status)
+	}
+	// created_at is fixed-width UTC text, so sorting the text sorts by time.
+	// It has whole seconds, so tasks created in the same second are ordered
+	// by id (ids only grow).
+	query += " ORDER BY created_at DESC, id DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	// With one connection, open rows would block every other query.
+	defer rows.Close()
+
+	// An empty slice is written as [], a nil slice as null.
+	tasks := []task.Task{}
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	// rows.Next also returns false when reading fails, so check why the loop stopped.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}

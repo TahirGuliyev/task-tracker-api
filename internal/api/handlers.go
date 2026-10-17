@@ -37,6 +37,7 @@ func NewRouter(store *storage.Store) http.Handler {
 	mux.HandleFunc("GET /tasks", h.listTasks)
 	mux.HandleFunc("GET /tasks/{id}", h.getTask)
 	mux.HandleFunc("PATCH /tasks/{id}", h.updateTask)
+	mux.HandleFunc("DELETE /tasks/{id}", h.deleteTask)
 
 	return mux
 }
@@ -186,6 +187,24 @@ func (h *taskHandlers) updateTask(w http.ResponseWriter, r *http.Request) {
 	// Update returns ErrNotFound for a missing task (404)
 	// and a validation error for a broken rule (400).
 	t, err := h.store.Update(context.Background(), id, changes)
+	if err != nil {
+		respondWithError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// deleteTask handles DELETE /tasks/{id}.
+// The assignment lists the status codes 200, 201, 400 and 404, so a successful
+// delete returns 200 with the deleted task instead of 204 No Content.
+func (h *taskHandlers) deleteTask(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	t, err := h.store.Delete(context.Background(), id)
 	if err != nil {
 		respondWithError(w, err)
 		return

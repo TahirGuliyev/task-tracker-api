@@ -201,3 +201,12 @@ func (s *Store) Update(ctx context.Context, id int64, changes task.Changes) (tas
 	// updated already holds what was written, so there is no second SELECT.
 	return updated, nil
 }
+
+// Delete removes the task with the given id and returns it, or ErrNotFound.
+func (s *Store) Delete(ctx context.Context, id int64) (task.Task, error) {
+	// RETURNING deletes the row and gives it back in one statement,
+	// so DELETE can answer with the deleted task. If no row matched,
+	// scanTask gets sql.ErrNoRows and returns ErrNotFound.
+	row := s.db.QueryRowContext(ctx, "DELETE FROM tasks WHERE id = ? RETURNING "+taskColumns, id)
+	return scanTask(row)
+}

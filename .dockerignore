@@ -1,0 +1,11 @@
+# Git history is not needed in the image
+.git
+
+# Local SQLite database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Binary built by "go build"
+/task-tracker-api

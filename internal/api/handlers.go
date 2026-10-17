@@ -23,6 +23,7 @@ type taskHandlers struct {
 }
 
 // NewRouter returns the HTTP handler that serves every endpoint.
+// Every request is logged, and a panic becomes a 500 response.
 func NewRouter(store *storage.Store) http.Handler {
 	h := &taskHandlers{store: store}
 	mux := http.NewServeMux()
@@ -39,7 +40,9 @@ func NewRouter(store *storage.Store) http.Handler {
 	mux.HandleFunc("PATCH /tasks/{id}", h.updateTask)
 	mux.HandleFunc("DELETE /tasks/{id}", h.deleteTask)
 
-	return mux
+	// The order matters: recoverPanics turns a panic into a 500 inside,
+	// so logRequests, which wraps it, sees and logs that 500.
+	return logRequests(recoverPanics(mux))
 }
 
 // createTaskRequest is the JSON body of POST /tasks. It is separate from
